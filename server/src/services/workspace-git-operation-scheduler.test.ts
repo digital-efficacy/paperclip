@@ -165,6 +165,14 @@ describe("WorkspaceGitOperationScheduler", () => {
     const scheduler = createWorkspaceGitOperationScheduler({ runner, defaultCacheTtlMs: 0 });
 
     const first = scheduler.run(scanInput(workspace, "same"));
+    // `run()` resolves the workspace path with an async realpath before it
+    // registers the flight, so two calls issued back-to-back race to become
+    // the owner: whichever realpath completes first gets
+    // `singleFlightJoined: false`. Wait until the first call owns the flight
+    // before issuing the aliased call, so the owner/joiner split asserted
+    // below is deterministic. The gated runner keeps the flight open until
+    // both callers are attached.
+    await vi.waitFor(() => expect(scheduler.snapshot()).toMatchObject({ inFlightCount: 1, activeCount: 1 }));
     const joined = scheduler.run(scanInput(alias, "same"));
     await vi.waitFor(() => expect(scheduler.snapshot().totals.singleFlightJoins).toBe(1));
     expect(calls).toBe(1);

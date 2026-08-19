@@ -89,6 +89,7 @@ export const SANDBOX_CAPABILITY_KEYS = [
   "persistentProcessSessions",
   "independentControlCommands",
   "incrementalSessionOutput",
+  "duplexCommandStream",
 ] as const;
 
 export type SandboxCapabilityKey = (typeof SANDBOX_CAPABILITY_KEYS)[number];
@@ -104,6 +105,7 @@ export type SandboxCapabilityKey = (typeof SANDBOX_CAPABILITY_KEYS)[number];
  */
 const SANDBOX_CAPABILITY_OPT_IN_KEYS: ReadonlySet<SandboxCapabilityKey> = new Set([
   "incrementalSessionOutput",
+  "duplexCommandStream",
 ]);
 
 /**
@@ -134,6 +136,11 @@ const SANDBOX_CAPABILITY_OPT_IN_KEYS: ReadonlySet<SandboxCapabilityKey> = new Se
  *   provider tails the session log through it. The verified verb is necessary
  *   but not sufficient: this key is opt-in, so the declaration is the real gate
  *   (see {@link SANDBOX_CAPABILITY_OPT_IN_KEYS}).
+ * - `duplexCommandStream` requires `duplexChannelOpen`, the worker verb that
+ *   opens the persistent duplex channel. The verified verb is necessary but not
+ *   sufficient: this key is opt-in, so the declaration is the real gate. A
+ *   provider that does not implement the duplex open verb resolves `false` and
+ *   keeps the file bridge.
  */
 const SANDBOX_CAPABILITY_PREREQUISITE_METHODS: Record<SandboxCapabilityKey, readonly (readonly string[])[]> = {
   // Reusable leases require ALL reuse verbs. Each verb is its own required
@@ -147,6 +154,7 @@ const SANDBOX_CAPABILITY_PREREQUISITE_METHODS: Record<SandboxCapabilityKey, read
   persistentProcessSessions: [["environmentExecute"]],
   independentControlCommands: [["environmentExecute"]],
   incrementalSessionOutput: [["environmentExecute"]],
+  duplexCommandStream: [["duplexChannelOpen"]],
 };
 
 function capabilityIsVerified(
@@ -230,6 +238,7 @@ export function resolveEffectiveSandboxCapabilities(input: {
     persistentProcessSessions: resolve("persistentProcessSessions"),
     independentControlCommands: resolve("independentControlCommands"),
     incrementalSessionOutput: resolve("incrementalSessionOutput"),
+    duplexCommandStream: resolve("duplexCommandStream"),
   };
 }
 

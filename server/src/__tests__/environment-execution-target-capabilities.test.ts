@@ -19,6 +19,7 @@ const SNAPSHOT: EffectiveSandboxCapabilities = {
   persistentProcessSessions: true,
   independentControlCommands: false,
   incrementalSessionOutput: false,
+  duplexCommandStream: false,
 };
 
 // A snapshot that grants every capability. A test overrides one flag to prove
@@ -30,6 +31,7 @@ const FULL_GRANT: EffectiveSandboxCapabilities = {
   persistentProcessSessions: true,
   independentControlCommands: true,
   incrementalSessionOutput: true,
+  duplexCommandStream: true,
 };
 
 // Build a sandbox execution target with a fixed snapshot and a fixed

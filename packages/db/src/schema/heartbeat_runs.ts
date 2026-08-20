@@ -36,6 +36,16 @@ export const heartbeatRuns = pgTable(
     processPid: integer("process_pid"),
     processGroupId: integer("process_group_id"),
     processStartedAt: timestamp("process_started_at", { withTimezone: true }),
+    // Whether the process recorded above carries the run itself, stamped by the
+    // adapter module that was executing when it reported the child. Recovery's
+    // process-death authority needs this as a fact about *this* run: the adapter
+    // registry is mutable at runtime (plugin install, uninstall, override
+    // pause/resume) and an agent's adapterType can be edited mid-run, so
+    // re-deriving the capability at sweep time can read it off a module that
+    // never executed the work. Null means unknown — rows written before this
+    // column existed, and runs that never reported a child — and callers fall
+    // back to resolving the capability from the registry.
+    processTracksRun: boolean("process_tracks_run"),
     lastOutputAt: timestamp("last_output_at", { withTimezone: true }),
     lastOutputSeq: integer("last_output_seq").notNull().default(0),
     lastOutputStream: text("last_output_stream"),

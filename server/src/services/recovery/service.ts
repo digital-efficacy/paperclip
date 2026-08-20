@@ -29,7 +29,7 @@ import {
 } from "@paperclipai/db";
 import { parseObject, asBoolean, asNumber } from "../../adapters/utils.js";
 import { runningProcesses } from "../../adapters/index.js";
-import { adapterTracksLocalChildProcess, isRunExecutingInProcess } from "../run-execution-registry.js";
+import { isRunExecutingInProcess, recordedProcessSpeaksForRun } from "../run-execution-registry.js";
 import { visibleIssueCondition } from "../issue-visibility.js";
 import { forbidden, notFound } from "../../errors.js";
 import { logger } from "../../middleware/logger.js";
@@ -1577,7 +1577,16 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     run: typeof heartbeatRuns.$inferSelect;
     runningAgent: typeof agents.$inferSelect;
   }) {
-    if (!adapterTracksLocalChildProcess(input.runningAgent.adapterType)) {
+    // Same stamped-fact-first rule as the process-death authority, and for a
+    // sharper reason: this path signals the recorded pid. If the run's adapter
+    // was replaced since it spawned, the type would answer for a module that
+    // never owned that child.
+    if (
+      !recordedProcessSpeaksForRun({
+        processTracksRun: input.run.processTracksRun,
+        adapterType: input.runningAgent.adapterType,
+      })
+    ) {
       return {
         attempted: false,
         outcome: "skipped_non_local_adapter",
@@ -5533,7 +5542,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   //   recorded process and process group are both gone. This catches a hard
   //   server crash that skipped the graceful teardown, even when the issue is
   //   not terminal. It requires the run's adapter to actually be carried by the
-  //   recorded child process (see adapterTracksLocalChildProcess) — an adapter
+  //   recorded child process (see recordedProcessSpeaksForRun) — an adapter
   //   that works in-process and reports one transient child per tool call
   //   records pids that are supposed to die mid-run, and reading those as run
   //   death terminalized live runs in a kill/wake loop.
@@ -5602,8 +5611,16 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       // that child process. Otherwise it is an adapter-owned helper — an
       // adapter that shells out per tool call reports one child per
       // run_command — whose death says nothing about the run.
-      const adapterType = await getRunAdapterType(run);
-      if (!adapterTracksLocalChildProcess(adapterType ?? "")) {
+      //
+      // The run stamped that answer when it recorded the pid, from the module
+      // that reported the child. Consult the adapter type only when the stamp
+      // is missing (rows older than the column, or a pid recorded by an older
+      // server): re-resolving it for a stamped run would ask a registry that
+      // adapter install, uninstall, override pause and an agent adapterType
+      // edit can all have changed since this run started.
+      const adapterType =
+        typeof run.processTracksRun === "boolean" ? null : await getRunAdapterType(run);
+      if (!recordedProcessSpeaksForRun({ processTracksRun: run.processTracksRun, adapterType })) {
         processGone = false;
       }
     }

@@ -10,6 +10,8 @@ import {
   activeRunExecutions,
   adapterTracksLocalChildProcess,
   isRunExecutingInProcess,
+  moduleTracksLocalChildProcess,
+  recordedProcessSpeaksForRun,
 } from "../services/run-execution-registry.ts";
 
 function stubAdapter(type: string, tracksLocalChildProcess?: boolean): ServerAdapterModule {
@@ -96,6 +98,88 @@ describe("adapterTracksLocalChildProcess", () => {
     expect(adapterTracksLocalChildProcess("hermes_gateway")).toBe(false);
 
     setOverridePaused("hermes_gateway", false);
+  });
+});
+
+// The capability is a property of the module that executed the run, but the
+// registry it lives in is mutable while runs execute: /api/adapters installs,
+// uninstalls and pauses modules, and an agent's adapterType can be edited
+// outright. Resolving by type at recovery time therefore answers "what would
+// run this type now", which is a different question. These cover the stamp that
+// closes the gap.
+describe("recordedProcessSpeaksForRun", () => {
+  const registered: string[] = [];
+
+  afterEach(() => {
+    while (registered.length > 0) unregisterServerAdapter(registered.pop()!);
+  });
+
+  function register(adapter: ServerAdapterModule) {
+    registerServerAdapter(adapter);
+    registered.push(adapter.type);
+  }
+
+  it("keeps a live in-process run's stamp when its adapter is uninstalled mid-run", () => {
+    // The run spawned under an in-process plugin that overrode claude_local, so
+    // its recorded pid is a finished tool call. Uninstalling the plugin restores
+    // the builtin, which declares true. Re-resolving by type would read that
+    // true and terminalize a live run on a dead transient pid.
+    register(stubAdapter("claude_local", false));
+    const stamped = moduleTracksLocalChildProcess(stubAdapter("claude_local", false), "claude_local");
+    expect(stamped).toBe(false);
+
+    unregisterServerAdapter(registered.pop()!);
+    expect(adapterTracksLocalChildProcess("claude_local")).toBe(true);
+    expect(
+      recordedProcessSpeaksForRun({ processTracksRun: stamped, adapterType: "claude_local" }),
+    ).toBe(false);
+  });
+
+  it("keeps a dead child-process run terminalizable when an in-process override lands mid-run", () => {
+    // The mirror image. The run spawned on the builtin child process, so its
+    // dead pid is real evidence. An override installed since declares false;
+    // honouring it would leave the dead run holding its issue lock forever.
+    const stamped = moduleTracksLocalChildProcess(null, "claude_local");
+    expect(stamped).toBe(true);
+
+    register(stubAdapter("claude_local", false));
+    expect(adapterTracksLocalChildProcess("claude_local")).toBe(false);
+    expect(
+      recordedProcessSpeaksForRun({ processTracksRun: stamped, adapterType: "claude_local" }),
+    ).toBe(true);
+  });
+
+  it("ignores the agent's adapterType once the run is stamped", () => {
+    // Editing an agent's adapterType mid-run repoints the type lookup at an
+    // unrelated module. The stamp still describes the process that was spawned.
+    expect(
+      recordedProcessSpeaksForRun({ processTracksRun: true, adapterType: "some_gateway" }),
+    ).toBe(true);
+    expect(
+      recordedProcessSpeaksForRun({ processTracksRun: false, adapterType: "claude_local" }),
+    ).toBe(false);
+  });
+
+  it("falls back to the registry for runs recorded before the stamp existed", () => {
+    // Null is "unknown", not "tracked": rows older than the column, and runs
+    // that never reported a child.
+    expect(
+      recordedProcessSpeaksForRun({ processTracksRun: null, adapterType: "claude_local" }),
+    ).toBe(true);
+    expect(
+      recordedProcessSpeaksForRun({ processTracksRun: undefined, adapterType: "plugin_unknown" }),
+    ).toBe(false);
+    expect(recordedProcessSpeaksForRun({ processTracksRun: null, adapterType: null })).toBe(false);
+  });
+});
+
+describe("moduleTracksLocalChildProcess", () => {
+  it("reads the module it is handed, falling back to the legacy list", () => {
+    expect(moduleTracksLocalChildProcess(stubAdapter("x", true), "x")).toBe(true);
+    expect(moduleTracksLocalChildProcess(stubAdapter("x", false), "x")).toBe(false);
+    // Declares nothing: the legacy list answers, by type.
+    expect(moduleTracksLocalChildProcess(stubAdapter("hermes_local"), "hermes_local")).toBe(true);
+    expect(moduleTracksLocalChildProcess(stubAdapter("hermes_gateway"), "hermes_gateway")).toBe(false);
   });
 });
 

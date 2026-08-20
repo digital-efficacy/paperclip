@@ -15,6 +15,7 @@
 // here so heartbeat.ts and recovery/service.ts share one answer instead of each
 // keeping a partial view.
 import { getServerAdapter, runningProcesses } from "../adapters/index.js";
+import type { ServerAdapterModule } from "../adapters/types.js";
 
 // Routes and the scheduler construct separate heartbeatService instances, but
 // they must agree on in-process adapter executions when reaping stale runs.
@@ -47,30 +48,73 @@ const LEGACY_LOCAL_CHILD_PROCESS_ADAPTERS = new Set([
 ]);
 
 /**
- * True when `heartbeat_runs.process_pid` / `process_group_id` describe the
- * process that carries the run, so their death is evidence the run died.
+ * True when the pid a module reports through `onSpawn` describes the process
+ * that carries the run, so its death is evidence the run died.
  *
- * Plugin adapters resolve to false unless they opt in, because `onSpawn` is
- * free to report short-lived children — an adapter that shells out per tool
- * call reports one child per `run_command`, and each of those pids dies within
- * seconds while the run keeps working.
+ * Takes the module rather than looking one up, so a caller that already holds
+ * the executing module — heartbeat, at the moment it records the pid — asks
+ * about that module and not about whatever the registry says later.
+ *
+ * Adapters that declare nothing resolve through the legacy list, so a plugin
+ * adapter is false unless it opts in: `onSpawn` is free to report short-lived
+ * children, and an adapter that shells out per tool call reports one child per
+ * `run_command` whose pid dies within seconds while the run keeps working.
+ */
+export function moduleTracksLocalChildProcess(
+  adapter: Pick<ServerAdapterModule, "tracksLocalChildProcess"> | null,
+  adapterType: string,
+): boolean {
+  if (adapter && typeof adapter.tracksLocalChildProcess === "boolean") {
+    return adapter.tracksLocalChildProcess;
+  }
+  return LEGACY_LOCAL_CHILD_PROCESS_ADAPTERS.has(adapterType);
+}
+
+/**
+ * The same question asked of the registry as it stands *now*, for callers that
+ * have only an adapter type. This is a guess about a run, not a fact about it:
+ * see `recordedProcessSpeaksForRun` for why, and prefer that entry point.
  *
  * Resolution goes through `getServerAdapter`, the same call execution uses to
  * pick the module it hands the run to. It must, because an external override
  * can be paused: `findServerAdapter` would still return the paused external
  * module while the run actually executed on the restored builtin fallback, and
- * the two need not agree on this flag. Reading the capability off a module that
- * did not run the work gets the pid authority exactly backwards — a dead
- * builtin run whose paused override declares `false` would keep its issue lock
- * forever, and a live gateway run whose paused override declares `true` would
- * be terminalized on a transient child's pid.
+ * the two need not agree on this flag.
  */
 export function adapterTracksLocalChildProcess(adapterType: string): boolean {
   // Never null: unknown types fall back to the process adapter, which is also
   // what would execute them.
-  const adapter = getServerAdapter(adapterType);
-  if (typeof adapter.tracksLocalChildProcess === "boolean") {
-    return adapter.tracksLocalChildProcess;
-  }
-  return LEGACY_LOCAL_CHILD_PROCESS_ADAPTERS.has(adapterType);
+  return moduleTracksLocalChildProcess(getServerAdapter(adapterType), adapterType);
+}
+
+/**
+ * Whether a run's recorded pid speaks for that run.
+ *
+ * Prefers `heartbeat_runs.process_tracks_run`, stamped by the module that was
+ * executing when it reported the child. Re-resolving the capability from the
+ * registry instead would answer a different question — "what would execute this
+ * adapter type right now" — and the two come apart, because the registry is
+ * mutable while a run executes: `POST /adapters` installs a module, the
+ * uninstall and pause routes remove or shadow one, and an agent's `adapterType`
+ * can be edited outright. Any of those between spawn and sweep inverts the pid
+ * authority in one of two directions:
+ *
+ * - A live in-process run whose adapter is uninstalled falls back to a builtin
+ *   that declares `true`, so the transient pid of a finished `run_command` is
+ *   read as run death and the run is terminalized mid-flight — the exact
+ *   kill/wake loop this authority was narrowed to stop.
+ * - A dead child-process run whose type is overridden by an in-process module
+ *   declaring `false` stops being terminalizable and keeps its issue lock
+ *   forever.
+ *
+ * `processTracksRun` is null for runs recorded before the column existed and
+ * for runs that never reported a child. Those fall back to registry resolution,
+ * which is what the caller would have done anyway.
+ */
+export function recordedProcessSpeaksForRun(input: {
+  processTracksRun: boolean | null | undefined;
+  adapterType: string | null;
+}): boolean {
+  if (typeof input.processTracksRun === "boolean") return input.processTracksRun;
+  return adapterTracksLocalChildProcess(input.adapterType ?? "");
 }

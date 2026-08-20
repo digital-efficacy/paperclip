@@ -1,0 +1,11 @@
+-- Record, at the moment a run reports its child process, whether that process
+-- carries the run itself. Recovery's process-death authority used to re-derive
+-- this from the adapter registry at sweep time. That registry is mutable while
+-- a run executes -- plugin install, uninstall and override pause/resume all go
+-- through live HTTP routes -- and it is keyed off an agent adapterType that can
+-- be edited mid-run, so the answer could come from a module that never executed
+-- the run and invert the authority in either direction.
+--
+-- Nullable: rows written before this column existed, and runs that never report
+-- a child process, stay unknown and fall back to registry resolution.
+ALTER TABLE "heartbeat_runs" ADD COLUMN IF NOT EXISTS "process_tracks_run" boolean;

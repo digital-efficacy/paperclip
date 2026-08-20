@@ -373,6 +373,95 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
     expect(run?.status).toBe("running");
   });
 
+  // The adapter registry is mutable while runs execute — /api/adapters installs,
+  // uninstalls and pauses modules, and an agent's adapterType can be edited — so
+  // re-resolving the capability at sweep time can answer for a module that never
+  // executed the run. The run stamps the answer when it records its pid, and the
+  // stamp wins.
+  it("honours the run's stamped pid authority over the agent's current adapterType", async () => {
+    const { companyId, agentId, runningRunId } = await seed();
+    // The run spawned under an in-process adapter and stamped false: its
+    // recorded pid was a finished tool call. The agent now points at
+    // claude_local, which tracks a single local child and would resolve true.
+    await db.update(agents).set({ adapterType: "claude_local" }).where(eq(agents.id, agentId));
+    await db
+      .update(heartbeatRuns)
+      .set({
+        processPid: 2_000_000_000,
+        processTracksRun: false,
+        startedAt: longAgo(),
+        updatedAt: longAgo(),
+      })
+      .where(eq(heartbeatRuns.id, runningRunId));
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Stamped false, adapterType now says otherwise",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: agentId,
+      checkoutRunId: runningRunId,
+      executionRunId: runningRunId,
+      executionLockedAt: new Date(),
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.sweepStaleIssueLocks();
+
+    expect(result.terminalizedRunIds).toEqual([]);
+    const run = await db
+      .select({ status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runningRunId))
+      .then((rows) => rows[0]);
+    expect(run?.status).toBe("running");
+  });
+
+  // Mirror image: a stamped-true run stays terminalizable even if the type it
+  // ran under would now resolve to an in-process module. Without this the dead
+  // run would hold its issue lock forever.
+  it("terminalizes a stamped-true run whose adapterType no longer tracks a child process", async () => {
+    const { companyId, agentId, runningRunId } = await seed();
+    await db
+      .update(agents)
+      .set({ adapterType: "unregistered_plugin_local" })
+      .where(eq(agents.id, agentId));
+    await db
+      .update(heartbeatRuns)
+      .set({
+        processPid: 2_000_000_000,
+        processTracksRun: true,
+        startedAt: longAgo(),
+        updatedAt: longAgo(),
+      })
+      .where(eq(heartbeatRuns.id, runningRunId));
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Stamped true, adapterType now says otherwise",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: agentId,
+      checkoutRunId: runningRunId,
+      executionRunId: runningRunId,
+      executionLockedAt: new Date(),
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.sweepStaleIssueLocks();
+
+    expect(result.terminalizedRunIds).toEqual([runningRunId]);
+    const run = await db
+      .select({ status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runningRunId))
+      .then((rows) => rows[0]);
+    // The process-death authority terminalizes as "interrupted".
+    expect(run?.status).toBe("interrupted");
+  });
+
   it("terminalizes a running run whose issue is terminal, even while the process stays alive (reuse-lease path)", async () => {
     // Reuse Lease ON stops the sandbox but keeps the server process alive, so
     // the in-memory handle and the recorded pid can both persist. The

@@ -87,6 +87,7 @@ import {
   activeRunExecutions,
   adapterTracksLocalChildProcess,
   isRunExecutingInProcess,
+  moduleTracksLocalChildProcess,
 } from "./run-execution-registry.js";
 import { getServerAdapter, listAdapterModelProfiles, runningProcesses } from "../adapters/index.js";
 import type {
@@ -9786,7 +9787,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
   async function persistRunProcessMetadata(
     runId: string,
-    meta: { pid: number; processGroupId: number | null; startedAt: string },
+    meta: {
+      pid: number;
+      processGroupId: number | null;
+      startedAt: string;
+      // Stamped from the module that reported this child, so recovery can read
+      // whether the pid speaks for the run as a fact about this run instead of
+      // re-deriving it from a registry that mutates while runs execute.
+      tracksRun: boolean;
+    },
   ) {
     const startedAt = new Date(meta.startedAt);
     return db
@@ -9795,6 +9804,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         processPid: meta.pid,
         processGroupId: meta.processGroupId,
         processStartedAt: Number.isNaN(startedAt.getTime()) ? new Date() : startedAt,
+        processTracksRun: meta.tracksRun,
         updatedAt: new Date(),
       })
       .where(eq(heartbeatRuns.id, runId))
@@ -16013,6 +16023,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                   ? meta.processGroupId
                   : null,
               startedAt: meta.startedAt,
+              // `adapter` is the module executing this run, resolved once above.
+              // Recording its answer here pins the pid authority to the module
+              // that owns the child; resolving the adapter type again at sweep
+              // time would ask a registry that install, uninstall, override
+              // pause and an adapterType edit can all have changed since.
+              tracksRun: moduleTracksLocalChildProcess(adapter, agent.adapterType),
             });
           },
           authToken: authToken ?? undefined,

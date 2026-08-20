@@ -225,6 +225,8 @@ Leave it `false` (the default) when the adapter does its work in-process — dri
 
 The two costs are asymmetric but both real: opting in wrongly kills healthy runs mid-flight; leaving it `false` for a single-child adapter only delays cleanup of genuinely dead runs, which then hold their issue lock until the quiet-period backstop expires.
 
+The flag is read **once per spawn**, off the module that is executing the run, and stamped onto that run as `heartbeat_runs.process_tracks_run`. Recovery reads the stamp rather than the registry, so installing, uninstalling, pausing or replacing an adapter mid-run cannot retroactively change how an already-recorded pid is interpreted. Changing the flag affects runs that spawn after the change, not runs already in flight.
+
 ### Example
 
 ```ts

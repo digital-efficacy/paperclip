@@ -49,6 +49,9 @@ describe("plugin upgrade capability approval", () => {
     expect(pending.status).toBe("upgrade_pending");
     expect(loadSingle).not.toHaveBeenCalled();
     expect(pending.manifestJson.capabilities).toContain("ui.page.register");
+    await expect(lifecycle.upgrade("plugin-1", "0.2.0")).rejects.toThrow("pending capability change");
+    expect(upgradePlugin).toHaveBeenCalledTimes(1);
+    expect(loadSingle).not.toHaveBeenCalled();
     const enabled = await lifecycle.enable("plugin-1");
     expect(enabled.status).toBe("ready");
     expect(loadSingle).toHaveBeenCalledTimes(1);

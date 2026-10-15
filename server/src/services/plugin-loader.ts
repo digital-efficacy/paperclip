@@ -546,7 +546,7 @@ export interface PluginLoader {
    *
    * @see PLUGIN_SPEC.md §25.3 — Upgrade Lifecycle
    */
-  upgradePlugin(pluginId: string, options: Omit<PluginInstallOptions, "installDir">): Promise<{
+  upgradePlugin(pluginId: string, options: Omit<PluginInstallOptions, "installDir"> & { deferCapabilityApproval?: boolean }): Promise<{
     oldManifest: PaperclipPluginManifestV1;
     newManifest: PaperclipPluginManifestV1;
     discovered: DiscoveredPlugin;
@@ -1795,7 +1795,7 @@ export function pluginLoader(
      */
     async upgradePlugin(
       pluginId: string,
-      upgradeOptions: Omit<PluginInstallOptions, "installDir">,
+      upgradeOptions: Omit<PluginInstallOptions, "installDir"> & { deferCapabilityApproval?: boolean },
     ): Promise<{
       oldManifest: PaperclipPluginManifestV1;
       newManifest: PaperclipPluginManifestV1;
@@ -1846,7 +1846,7 @@ export function pluginLoader(
       const newCaps = newManifest.capabilities ?? [];
       const escalated = newCaps.filter((c) => !oldCaps.has(c));
 
-      if (escalated.length > 0) {
+      if (escalated.length > 0 && !upgradeOptions.deferCapabilityApproval) {
         log.warn(
           { pluginId, escalated, oldVersion: oldManifest.version, newVersion: newManifest.version },
           "plugin-loader: upgrade introduces new capabilities — requires admin approval",
@@ -1858,12 +1858,26 @@ export function pluginLoader(
         );
       }
 
-      // 4. Update the existing record
-      await registry.update(pluginId, {
+      // A capability-changing candidate must never be observable as ready.
+      // Store its manifest and pending status in one transaction. Only the
+      // lifecycle's explicit admin enable action may activate the candidate.
+      const update = {
         packageName: discovered.packageName,
         version: discovered.version,
         manifest: newManifest,
-      });
+      };
+      if (escalated.length > 0) {
+        await db.transaction(async (tx) => {
+          const stagedRegistry = pluginRegistryService(tx as unknown as Db);
+          await stagedRegistry.update(pluginId, update);
+          await stagedRegistry.updateStatus(pluginId, {
+            status: "upgrade_pending",
+            lastError: null,
+          });
+        });
+      } else {
+        await registry.update(pluginId, update);
+      }
 
       return {
         oldManifest,

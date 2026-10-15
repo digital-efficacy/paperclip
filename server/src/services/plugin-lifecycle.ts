@@ -656,7 +656,9 @@ export function pluginLifecycleManager(
 
       // 1. Download and validate new package via loader
       const { oldManifest, newManifest, discovered } =
-        await pluginLoaderInstance.upgradePlugin(pluginId, { version });
+        // The lifecycle owns the approval boundary: persist the candidate, then
+        // keep its worker stopped in upgrade_pending until an admin enables it.
+        await pluginLoaderInstance.upgradePlugin(pluginId, { version, deferCapabilityApproval: true });
 
       log.info(
         {

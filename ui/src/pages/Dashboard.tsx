@@ -451,6 +451,12 @@ export function Dashboard() {
             />
           </div>
 
+          <PluginSlotOutlet
+            slotTypes={["dashboardWidget"]}
+            context={{ companyId: selectedCompanyId }}
+            className="grid gap-1 sm:gap-2"
+          />
+
           <SmokeLabDashboardCard companyId={selectedCompanyId!} />
 
           <div className={cn("grid grid-cols-2 gap-4", SHOW_TASK_PRIORITY_UI ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
@@ -471,13 +477,7 @@ export function Dashboard() {
             </ChartCard>
           </div>
 
-          <PluginSlotOutlet
-            slotTypes={["dashboardWidget"]}
-            context={{ companyId: selectedCompanyId }}
-            className="grid gap-4 md:grid-cols-2"
-            // design-allow(card-pattern): class-string prop consumed by the plugin outlet; a component can't be passed here (C5a Run 3)
-            itemClassName="rounded-lg border bg-card p-4 shadow-sm"
-          />
+
 
           <div className="grid md:grid-cols-2 gap-4">
             {/* Recent Activity */}

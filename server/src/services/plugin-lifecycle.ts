@@ -639,11 +639,13 @@ export function pluginLifecycleManager(
     async upgrade(pluginId: string, version?: string): Promise<PluginRecord> {
       const plugin = await requirePlugin(pluginId);
 
-      // Can only upgrade plugins that are ready or already in upgrade_pending
-      if (plugin.status !== "ready" && plugin.status !== "upgrade_pending") {
+      // The candidate manifest already contains its unapproved capabilities.
+      // A repeated upgrade must not compare that candidate with itself and
+      // activate it as though no capabilities had been added.
+      if (plugin.status !== "ready") {
         throw badRequest(
           `Cannot upgrade plugin in status '${plugin.status}'. ` +
-            `Plugin must be in 'ready' or 'upgrade_pending' status to be upgraded.`,
+            `Approve or reject any pending capability change before upgrading again. Plugin must be 'ready'.`,
         );
       }
 
@@ -656,7 +658,9 @@ export function pluginLifecycleManager(
 
       // 1. Download and validate new package via loader
       const { oldManifest, newManifest, discovered } =
-        await pluginLoaderInstance.upgradePlugin(pluginId, { version });
+        // The lifecycle owns the approval boundary: persist the candidate, then
+        // keep its worker stopped in upgrade_pending until an admin enables it.
+        await pluginLoaderInstance.upgradePlugin(pluginId, { version, deferCapabilityApproval: true });
 
       log.info(
         {

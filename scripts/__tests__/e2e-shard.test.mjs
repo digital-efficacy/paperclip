@@ -29,10 +29,11 @@ function readTrustedPrWorkflow() {
   const caller = readFileSync(prCallerWorkflow, "utf8");
   assert.match(
     caller,
-    /^\s+uses: paperclipai\/paperclip\/\.github\/workflows\/pr-trusted\.yml@master\s*$/m,
-    "pr.yml must call the trusted workflow from CODEOWNERS-protected master",
+    /^\s+uses: paperclipai\/paperclip\/\.github\/workflows\/pr-trusted\.yml@467125fafb47a8520856504fecc48d6e32055db1\s*$/m,
+    "pr.yml must call the exact trusted upstream workflow matching the deployed base",
   );
-  // Validate proposed workflow changes locally; CI executes the merged master version.
+  // This maintenance fork pins the trusted official workflow to the deployed base.
+  // Arbitrary repositories, mutable refs and unreviewed PR workflow code remain rejected.
   return readFileSync(trustedPrWorkflow, "utf8");
 }
 
@@ -157,7 +158,7 @@ test("shard arguments are validated", () => {
   }
 });
 
-test("pr.yml calls the trusted PR workflow from master", () => {
+test("pr.yml pins the trusted PR workflow to the exact deployed upstream revision", () => {
   assert.ok(readTrustedPrWorkflow().length > 0);
 });
 
